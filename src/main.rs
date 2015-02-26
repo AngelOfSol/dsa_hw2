@@ -27,6 +27,7 @@ struct Model {
 	faces: Vec<[i32; 3]>,
 }
 
+#[derive(Copy)]
 struct Object3D <A> where A: std::fmt::Debug{
 	center: Vector3<A>,
 	axis: [Vector3<A>; 3],
@@ -50,7 +51,7 @@ impl<A> std::fmt::Debug for Object3D<A> where A: std::fmt::Debug {
 	}
 }
 impl<A: 'static> Object3D<A> where A: BaseFloat + std::num::Float {
-	fn colliding_with(self: &Object3D<A>, other: &Object3D<A>) -> bool {
+	fn colliding_with(self: &Object3D<A>, other: &Object3D<A>, log: bool) -> bool {
 		let test_axes = {
 			let mut test_axes = vec![
 				self.axis[0],
@@ -62,39 +63,132 @@ impl<A: 'static> Object3D<A> where A: BaseFloat + std::num::Float {
 			];
 			for axis_self in self.axis.iter() {
 				for axis_other in other.axis.iter() {
-					test_axes.push(axis_self.cross(axis_other));
+					if *axis_other != *axis_self {
+						test_axes.push(axis_self.normalize().cross(&axis_other.normalize()).normalize());
+					}
 				}
 			}
 			test_axes
 		};
 
 		let diff = self.center - other.center;
+		if log {
+		println!("{:?}", self);
 
+		println!("{:?}", other);
+
+		println!("");
+	}
 		for axis in test_axes {
 			let distance = diff.dot(&axis).abs();
 
-			let self_radius = self.extents_along(&axis).abs();
-			let other_radius = other.extents_along(&axis).abs();
+			let self_radius = self.extents_along(&axis, log).abs();
+			let other_radius = other.extents_along(&axis, log ).abs();
+
+			if log {
+				println!("{:?}", distance);
+				println!("{:?}", self_radius);
+				println!("{:?}", other_radius);
+				println!("{:?}", axis);
+				println!("LOOK HERE");
+			}
 
 			if distance > self_radius + other_radius {
 				return false;
 			}
 		}	
 
-
 		true
 	}
 
-	fn extents_along(self: &Object3D<A>, axis: &Vector3<A>) -> A {
-		let mut extent_vec: Vector3<A> = Vector3::new(Float::zero(), Float::zero(), Float::zero());
-		for (extent, extent_axis) in self.extents.iter().zip(self.axis.iter()) {
-			let vec = extent_axis.mul_s(*extent);
-			extent_vec = extent_vec + vec;
+	fn extents_along(self: &Object3D<A>, axis: &Vector3<A>, log: bool) -> A {
+		let mut ret: A = Float::zero();
+		let axis_n = &axis.normalize();
+
+		let x_axis = self.axis[0].mul_s(self.extents[0]); 
+		let y_axis = self.axis[1].mul_s(self.extents[1]); 
+		let z_axis = self.axis[2].mul_s(self.extents[2]); 
+
+		let one: A = Float::one();
+		let two: A = one + one;
+
+		for i in std::iter::count(-one, two).take(2) {
+			for j in std::iter::count(-one, two).take(2) {
+				for k in std::iter::count(-one, two).take(2) {
+					let test_vec = x_axis.mul_s(i) + y_axis.mul_s(j) + z_axis.mul_s(k);
+					let val = test_vec.dot(axis_n);
+					ret = std::cmp::partial_max(val, ret).unwrap();
+				}
+			}
 		}
-		extent_vec.dot(axis).abs()
+
+		ret
 	}
 
-	
+}
+
+
+
+impl Object3D<f32> {
+	fn into_model(self: &Object3D<f32>) -> Model {
+
+		let x_axis = self.axis[0].mul_s(self.extents[0]); 
+		let y_axis = self.axis[1].mul_s(self.extents[1]); 
+		let z_axis = self.axis[2].mul_s(self.extents[2]); 
+		
+		let left_bottom_back = (-x_axis - y_axis - z_axis + self.center).into_fixed();
+		let left_top_back = (-x_axis + y_axis - z_axis + self.center).into_fixed();
+		let left_top_front = (-x_axis + y_axis + z_axis + self.center).into_fixed();
+		let left_bottom_front = (-x_axis - y_axis + z_axis + self.center).into_fixed();
+
+		let right_bottom_back = (x_axis - y_axis - z_axis + self.center).into_fixed();
+		let right_top_back = (x_axis + y_axis - z_axis + self.center).into_fixed();
+		let right_top_front = (x_axis + y_axis + z_axis + self.center).into_fixed();
+		let right_bottom_front = (x_axis - y_axis + z_axis + self.center).into_fixed();
+
+		Model {
+			vertices: vec![
+				Vertex { position: left_bottom_back },
+				Vertex { position: left_bottom_front },
+				Vertex { position: left_top_back },
+				Vertex { position: left_top_front },
+				Vertex { position: right_bottom_back },
+				Vertex { position: right_bottom_front },
+				Vertex { position: right_top_back },
+				Vertex { position: right_top_front },
+			],
+			faces: vec![
+				[0, 2, 4],
+				[4, 2, 6],
+
+				[5, 4, 7],
+				[7, 4, 6],
+
+				[2, 0, 3],
+				[3, 0, 1],
+
+				[3, 7, 2],
+				[2, 7, 6],
+
+				[7, 3, 5],
+				[5, 3, 1],
+
+				[4, 5, 0],
+				[0, 5, 1],
+			]
+		}
+	}
+}
+
+fn sign_of<A: Float>(x: A) -> A {
+	if x == Float::zero() {
+		Float::zero()
+	} else if x > Float::zero() {
+		Float::one()
+	} else {
+		let ret: A = Float::one();
+		-ret
+	}
 }
 
 impl Model {
@@ -117,17 +211,17 @@ impl Model {
 		}
 	}
 
-	fn make_box() -> Model {
+	fn make_box(right: f32, top: f32, front: f32) -> Model {
 
-		let left_bottom_back = [-0.5, -0.5, -0.5];
-		let left_top_back = [-0.5, 0.5, -0.5];
-		let left_top_front = [-0.5, 0.5, 0.5];
-		let left_bottom_front = [-0.5, -0.5, 0.5];
+		let left_bottom_back = [-right, -top, -front];
+		let left_top_back = [-right, top, -front];
+		let left_top_front = [-right, top, front];
+		let left_bottom_front = [-right, -top, front];
 
-		let right_bottom_back = [0.5, -0.5, -0.5];
-		let right_top_back = [0.5, 0.5, -0.5];
-		let right_top_front = [0.5, 0.5, 0.5];
-		let right_bottom_front = [0.5, -0.5, 0.5];
+		let right_bottom_back = [right, -top, -front];
+		let right_top_back = [right, top, -front];
+		let right_top_front = [right, top, front];
+		let right_bottom_front = [right, -top, front];
 
 		Model {
 			vertices: vec![
@@ -265,19 +359,8 @@ fn main() {
 			Vector3 { x: 0.0f32, y: 1.0f32, z: 0.0f32}.normalize(),
 			Vector3 { x: 0.0f32, y: 0.0f32, z: 1.0f32}.normalize(),
 		],
-		extents: [0.5f32, 0.5f32, 0.5f32],
+		extents: [1.0f32, 1.0f32, 1.0f32],
 	};
-	let obj2 = Object3D {
-		center: Vector3 { x: 0.0f32, y: 0.0f32, z: 0.0f32},
-		axis: [
-			Vector3 { x: 1.0f32, y: 0.0f32, z: 0.0f32}.normalize(),
-			Vector3 { x: 0.0f32, y: 1.0f32, z: 0.0f32}.normalize(),
-			Vector3 { x: 0.0f32, y: 0.0f32, z: 1.0f32}.normalize(),
-		],
-		extents: [0.5f32, 0.5f32, 0.5f32],
-	};
-	let angle: f32 = std::f32::consts::PI / 4.0f32;
-	let obj2 = obj2.rotate(angle, &Vector3::new(0.0f32, 1.0f32, 0.0f32)).translate(&Vector3::new(2.1f32, 0.0f32, 0.0f32)).scale(&Vector3::new(3.0f32, 3.0f32, 3.0f32));
 
     let display = glutin::WindowBuilder::new()
         .with_dimensions(1024, 768)
@@ -287,8 +370,8 @@ fn main() {
     let color_buffer = glium::texture::Texture2d::empty(&display, 1024, 768);
     let mut frame_buffer = glium::framebuffer::SimpleFrameBuffer::with_depth_buffer(&display, &color_buffer, &depth_buffer);
 
-    let box_model = Model::make_box();
-    let box_render_object = box_model.into_render_object(&display);
+    //let box_model = Model::make_box();
+    //let box_render_object = box_model.into_render_object(&display);
 
 	let program = glium::Program::from_source(&display,
 	    // vertex shader
@@ -353,11 +436,12 @@ fn main() {
 	).unwrap();
 
 	let camera = Matrix4::identity()
-		.rotate(std::f32::consts::PI / 6.0f32, &Vector3::new(1.0f32, 0.0f32, 0.0f32))
-		.translate(&Vector3::new(0.0f32, -5.0f32, -8.0f32))
-		.rotate(std::f32::consts::PI / -6.0f32, &Vector3::new(0.0f32, 1.0f32, 0.0f32))
+		.rotate(std::f32::consts::PI / 4.0f32, &Vector3::new(1.0f32, 0.0f32, 0.0f32))
+		.translate(&Vector3::new(0.0f32, -3.0f32, -8.0f32))
+		.rotate(std::f32::consts::PI / -4.0f32, &Vector3::new(0.0f32, 1.0f32, 0.0f32))
 	;
-	let perspective_mat = perspective(Deg { s: 45.0f32}, 1024.0f32 / 768.0f32, 0.01f32, 200.0f32);
+	let size = 10.0f32;
+	let perspective_mat = ortho(-size, size, -0f32, size, -size, size);//perspective(Deg { s: 45.0f32}, 1024.0f32 / 768.0f32, 0.01f32, 200.0f32);
 	let mut current_rotation = 0.0f32;
 	let mut done = false;	
 	let mut ren = Renderer {
@@ -381,6 +465,7 @@ fn main() {
 	let (mut x, mut y) = (0.0f32, 0.0f32);
 	let speed = 0.03f32;
 	while !done {
+		let mut log = false;
 		for e in display.poll_events()
 		{
 			match e
@@ -394,6 +479,7 @@ fn main() {
 									glutin::VirtualKeyCode::Right => x += speed,
 									glutin::VirtualKeyCode::Up => y += speed,
 									glutin::VirtualKeyCode::Down => y -= speed,
+									glutin::VirtualKeyCode::L => log = true,
 									_ =>(),
 								}
 							},
@@ -408,29 +494,41 @@ fn main() {
 			}
 		}
 
-		current_rotation += 0.0005f32;
+		current_rotation += 0.0002f32;
 
-		let (cur_x, cur_y) = (x + 2.0f32, y + 1.0f32);
+		let (cur_x, cur_y) = (x, y);
 
+		fn transform_second_box<A: Transformable<Vector3<f32>, f32>>(z: A, current_rotation: f32) -> A {
+			z
+			.rotate(std::f32::consts::PI / 4.0f32, &Vector3::new(0.0f32, 0.0f32, 1.0f32))
+			.rotate(std::f32::consts::PI / 4.0f32, &Vector3::new(1.0f32, 0.0f32, 0.0f32))
+			.rotate(current_rotation, &Vector3::new(0.0f32, 1.0f32, 0.0f32))
+			.translate(&Vector3::new(0.0f32, 0.0f32, 0.0f32))
+		};
 
-		let color = 0.7f32;
+		let left_obj = obj1.translate(&Vector3::new(cur_x, cur_y, 0.0f32));
+		let right_obj = transform_second_box(obj1, current_rotation);
 
-		let rot = Matrix4::identity() 
-			.translate(&Vector3::new(cur_x, cur_y, 0.0f32))
+		let collides = left_obj.colliding_with(&right_obj, log );
+
+		let color = if collides {
+			0.7f32
+		} else {
+			1.0f32
+		};
+
+		let rot = Matrix4::identity()
+			//.scale(&Vector3::from_value(0.5f32))
+			//.translate(&Vector3::new(cur_x, cur_y, 0.0f32))
 			;
 		ren.frame_buffer.clear_color(0.0, 0.0, 0.0, 1.0);
 		ren.frame_buffer.clear_depth(1.0);
 
-		ren.draw_model(&box_render_object, rot, color);
+		ren.draw_model(&left_obj.into_model().into_render_object(&display), rot, color);
 
-		let rot = Matrix4::identity()
-			.rotate(std::f32::consts::PI / 6.0f32, &Vector3::new(1.0f32, 0.0f32, 0.0f32))
-			.rotate(current_rotation, &Vector3::new(0.0f32, 1.0f32, 0.0f32))
-			.scale(&Vector3::new(3.0f32, 1.5f32, 1.5f32))
-			.translate(&Vector3::new(0.0f32, 1.0f32, 0.0f32))
-		;
+		let rot = Matrix4::identity();//transform_second_box(Matrix4::identity().scale(&Vector3::from_value(0.5f32)), current_rotation);
 
-		ren.draw_model(&box_render_object, rot, color);
+		ren.draw_model(&right_obj.into_model().into_render_object(&display), rot, color);
 
 
 		ren.frame_buffer.blit_color(&source_rect, &display.draw(), &dest_rect, glium::uniforms::MagnifySamplerFilter::Nearest);
