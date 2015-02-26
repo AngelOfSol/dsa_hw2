@@ -1,0 +1,164 @@
+#![feature(plugin)]
+extern crate glutin;
+#[macro_use]
+extern crate glium;
+
+extern crate "cgmath" as cg;
+
+#[plugin]
+extern crate glium_macros;
+
+use glium::index;
+use glium::DisplayBuild;
+use glium::Surface;
+use glutin::Event;
+use cg::*;
+#[vertex_format]
+#[derive(Copy)]
+struct Vertex {
+    position: [f32; 3],
+    normal: [f32; 3],
+}
+
+struct Renderer <'a, 'b> {
+	camera: Matrix4<f32>,
+	perspective_mat: Matrix4<f32>,
+	target: &'a mut glium::Frame,
+	program: &'b glium::Program,
+}
+impl<'a, 'b> Renderer<'a, 'b> {
+	fn draw(& mut self, object: &glium::VertexBuffer<Vertex>, angle: f32) {
+		let indices = index::NoIndices(index::PrimitiveType::TriangleStrip);
+		let cur_angle = Deg { s: angle };
+		let bas : Basis3<f32> = Rotation3::from_angle_y(cur_angle.to_rad());
+		let rot_mat = bas.to_matrix3().to_matrix4();
+		let uniforms = uniform! {
+		    matrix:  self.perspective_mat * rot_mat * self.camera,
+		    model: self.camera,
+		    light: [0.0, 0.0, 1.0],
+		    attenuation: 3.0
+		};
+		let def_render = &std::default::Default::default();
+		self.target.draw(object, &indices, &self.program, &uniforms, def_render).unwrap();
+	}
+}
+fn main() {
+
+    let display = glutin::WindowBuilder::new()
+        .with_dimensions(1024, 768)
+        .with_title(format!("Hello world"))
+        .build_glium().unwrap();
+
+	let square = glium::VertexBuffer::new(&display, vec![
+	    Vertex { position: [0.0, 0.0, 0.0], normal: [0.0, 0.0, 1.0] },
+	    Vertex { position: [1.0, 0.0, 0.0], normal: [0.0, 0.0, 1.0] },
+	    Vertex { position: [0.0, 1.0, 0.0], normal: [0.0, 0.0, 1.0] },
+	    Vertex { position: [1.0, 1.0, 0.0], normal: [0.0, 0.0, 1.0] },
+	]);
+	let triangle = glium::VertexBuffer::new(&display, vec![
+	    Vertex { position: [0.0, 0.0, 0.0], normal: [0.0, 0.0, 1.0] },
+	    Vertex { position: [1.0, 0.0, 0.0], normal: [0.0, 0.0, 1.0] },
+	    Vertex { position: [0.0, 1.0, 0.0], normal: [0.0, 0.0, 1.0] },
+
+	]);
+	let program = glium::Program::from_source(&display,
+	    // vertex shader
+	    "   #version 330 
+
+
+	        uniform mat4 matrix;
+	        uniform mat4 model;
+
+	        attribute vec3 position;
+	        attribute vec3 normal;
+
+	        varying vec3 pos;
+	        varying vec3 norm;
+
+
+	        void main() {
+	            gl_Position = matrix * vec4(position, 1);
+	            pos = position;
+	            norm = normal;
+	        }
+	    ",
+
+	    // fragment shader
+	    "   #version 330
+
+	    	varying vec3 pos;
+	    	varying vec3 norm;
+
+	    	uniform vec3 light;
+	    	uniform float attenuation;
+
+	        void main() {
+	        	vec3 diff = light - pos;
+	        	float cos_theta = dot(norm, diff);
+	        	float dist = distance(pos, light);
+	        	float inv_dist = cos_theta / (attenuation * dist);
+	            gl_FragColor = vec4(1, 1, 1, 1) * inv_dist;
+	        }
+	    ",
+	    // optional geometry shader
+	    None
+	).unwrap();
+
+	let camera = Matrix4::from_translation(&Vector3::new(0.0, 0.0, -3.0));
+	let perspective_mat = perspective(Deg { s: 45.0f32}, 1024.0f32 / 768.0f32, 0.01f32, 200.0f32);
+	let mut current_rotation = 0.0f32;
+	let indices = index::NoIndices(index::PrimitiveType::TriangleStrip);
+	let mut done = false;	
+	let mut target = display.draw();
+	let mut ren = Renderer {
+		camera: camera,
+		perspective_mat: perspective_mat,
+		target: & mut target,
+		program: &program
+	};
+	while !done {
+		for e in display.poll_events()
+		{
+			match e
+			{
+				Event::Closed => done = true,
+				_ => ()
+			}
+		}
+		current_rotation += 0.001f32;
+		let cur_angle = Deg { s: current_rotation };
+		let bas : Basis3<f32> = Rotation3::from_angle_y(cur_angle.to_rad());
+		let rot_mat = bas.to_matrix3().to_matrix4();
+		let uniforms = uniform! {
+		    matrix:  perspective_mat * rot_mat * camera,
+		    model: camera,
+		    light: [0.0, 0.0, 1.0],
+		    attenuation: 3.0
+		};
+		let mut target = display.draw();
+		target.clear_color(0.0, 0.0, 0.0, 0.0);  // filling the output with the black color
+		let def_render = &std::default::Default::default();
+		target.draw(&square, &indices, &program, &uniforms, def_render).unwrap();
+		let cur_angle = Deg { s: (current_rotation + 30.0f32)};
+		let bas : Basis3<f32> = Rotation3::from_angle_y(cur_angle.to_rad());
+		let rot_mat = bas.to_matrix3().to_matrix4();
+		let uniforms = uniform! {
+		    matrix:  perspective_mat * rot_mat * camera,
+		    model: camera,
+		    light: [0.0, 0.0, 1.0],
+		    attenuation: 3.0
+		};
+		target.draw(&triangle, &indices, &program, &uniforms, def_render).unwrap();
+
+		target.finish();	
+
+	}
+}
+/*
+[
+		        [ 1.0, 0.0, 0.0, 0.0 ],
+		        [ 0.0, 1.0, 0.0, 0.0 ],
+		        [ 0.0, 0.0, 1.0, 0.0 ],
+		        [ 0.0, 0.0, 0.0, 1.0 ]
+		    ]
+*/
